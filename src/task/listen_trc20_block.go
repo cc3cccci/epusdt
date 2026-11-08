@@ -437,6 +437,7 @@ func (s *Scanner) poll() {
 		processBlock(block, tokenMap)
 		s.lastBlock = num
 		s.totalBlocks++
+		data.RecordProcessedBlock(mdb.NetworkTron, num)
 
 		for _, tx := range block.Transactions {
 			if parseTRC20Transfer(tx, tokenMap) != nil {

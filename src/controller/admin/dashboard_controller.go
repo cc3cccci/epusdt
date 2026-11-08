@@ -56,16 +56,19 @@ type RpcStatsSummaryResponse struct {
 
 // RpcStatsChainResponse is one chain's in-process RPC runtime stats.
 type RpcStatsChainResponse struct {
-	Network           string  `json:"network" example:"tron"`
-	DisplayName       string  `json:"display_name" example:"TRON"`
-	Enabled           bool    `json:"enabled" example:"true"`
-	HasData           bool    `json:"has_data" example:"true"`
-	Status            string  `json:"status" example:"ok" enums:"ok,warning,down,unknown,disabled"`
-	SuccessCount      int64   `json:"success_count" example:"123"`
-	FailureCount      int64   `json:"failure_count" example:"2"`
-	SuccessRate       float64 `json:"success_rate" example:"0.984"`
-	LatestBlockHeight int64   `json:"latest_block_height" example:"64532100"`
-	LastSyncAt        string  `json:"last_sync_at" example:"2026-06-09T12:00:00+08:00"`
+	Network             string  `json:"network" example:"tron"`
+	DisplayName         string  `json:"display_name" example:"TRON"`
+	Enabled             bool    `json:"enabled" example:"true"`
+	HasData             bool    `json:"has_data" example:"true"`
+	Status              string  `json:"status" example:"ok" enums:"ok,warning,down,unknown,disabled"`
+	SuccessCount        int64   `json:"success_count" example:"123"`
+	FailureCount        int64   `json:"failure_count" example:"2"`
+	SuccessRate         float64 `json:"success_rate" example:"0.984"`
+	LatestBlockHeight   int64   `json:"latest_block_height" example:"64532100"`
+	LastSyncAt          string  `json:"last_sync_at" example:"2026-06-09T12:00:00+08:00"`
+	LastProcessedBlock  int64   `json:"last_processed_block" example:"64532010"`
+	ProcessedBlockCount int64   `json:"processed_block_count" example:"2"`
+	LastProcessedAt     string  `json:"last_processed_at" example:"2026-06-09T12:00:05+08:00"`
 }
 
 type rpcStatsStreamEnvelope struct {
@@ -277,9 +280,12 @@ func (c *BaseAdminController) OrderStats(ctx echo.Context) error {
 }
 
 // RpcStats returns process-local RPC runtime counters grouped by chain.
-// Values reset on process restart and are not persisted to the database.
+// latest_block_height and last_sync_at follow node calls such as getnowblock.
+// last_processed_block, processed_block_count, and last_processed_at advance
+// only after a scanner finishes a block. TRON reports those fields; other
+// chains stay at zero. Values reset on process restart and are not persisted.
 // @Summary      RPC runtime statistics
-// @Description  Streams in-process RPC success/failure counts, success rate, latest block height and last sync time by chain over one authenticated SSE connection.
+// @Description  Streams in-process RPC success/failure counts, chain-tip height, and blocks actually processed by chain over one authenticated SSE connection.
 // @Tags         Admin Dashboard
 // @Security     AdminJWT
 // @Produce      text/event-stream
@@ -311,6 +317,10 @@ func buildRpcStatsResponse() (RpcStatsDashboardResponse, error) {
 		if !stat.LastSyncAt.IsZero() {
 			lastSyncAt = stat.LastSyncAt.Format(time.RFC3339)
 		}
+		lastProcessedAt := ""
+		if !stat.LastProcessedAt.IsZero() {
+			lastProcessedAt = stat.LastProcessedAt.Format(time.RFC3339)
+		}
 
 		resp.Summary.TotalChains++
 		if chain.Enabled {
@@ -335,16 +345,19 @@ func buildRpcStatsResponse() (RpcStatsDashboardResponse, error) {
 		resp.Summary.FailureCount += stat.FailureCount
 
 		resp.Chains = append(resp.Chains, RpcStatsChainResponse{
-			Network:           chain.Network,
-			DisplayName:       rpcStatsDisplayName(chain.Network, chain.DisplayName),
-			Enabled:           chain.Enabled,
-			HasData:           hasData,
-			Status:            status,
-			SuccessCount:      stat.SuccessCount,
-			FailureCount:      stat.FailureCount,
-			SuccessRate:       successRate,
-			LatestBlockHeight: stat.LatestBlockHeight,
-			LastSyncAt:        lastSyncAt,
+			Network:             chain.Network,
+			DisplayName:         rpcStatsDisplayName(chain.Network, chain.DisplayName),
+			Enabled:             chain.Enabled,
+			HasData:             hasData,
+			Status:              status,
+			SuccessCount:        stat.SuccessCount,
+			FailureCount:        stat.FailureCount,
+			SuccessRate:         successRate,
+			LatestBlockHeight:   stat.LatestBlockHeight,
+			LastSyncAt:          lastSyncAt,
+			LastProcessedBlock:  stat.LastProcessedBlock,
+			ProcessedBlockCount: stat.ProcessedBlockCount,
+			LastProcessedAt:     lastProcessedAt,
 		})
 	}
 	resp.Summary.SuccessRate = rpcStatsSuccessRate(resp.Summary.SuccessCount, resp.Summary.FailureCount)

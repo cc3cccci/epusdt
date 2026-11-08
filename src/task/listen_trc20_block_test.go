@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/GMWalletApp/epusdt/internal/testutil"
 	"github.com/GMWalletApp/epusdt/model/dao"
@@ -65,7 +66,9 @@ func TestTronScannerStopsOnHistoricalBlockFetchError(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 	data.ResetRpcFailoverForTest()
+	data.ResetRpcRuntimeStatsForTest()
 	t.Cleanup(data.ResetRpcFailoverForTest)
+	t.Cleanup(data.ResetRpcRuntimeStatsForTest)
 
 	node := &mdb.RpcNode{
 		Network: mdb.NetworkTron,
@@ -109,6 +112,111 @@ func TestTronScannerStopsOnHistoricalBlockFetchError(t *testing.T) {
 	if scanner.lastBlock != 1 {
 		t.Fatalf("lastBlock = %d, want 1 so failed block is retried", scanner.lastBlock)
 	}
+	tron := data.SnapshotRpcRuntimeStats()[mdb.NetworkTron]
+	if tron.LatestBlockHeight != 3 {
+		t.Fatalf("latest block height = %d, want 3 from getnowblock", tron.LatestBlockHeight)
+	}
+	if tron.LastProcessedBlock != 0 || tron.ProcessedBlockCount != 0 || !tron.LastProcessedAt.IsZero() {
+		t.Fatalf("failed poll recorded processing progress: %+v", tron)
+	}
+}
+
+func TestTronProcessingProgressAdvancesOnlyAfterSuccessfulProcess(t *testing.T) {
+	cleanup := testutil.SetupTestDatabases(t)
+	defer cleanup()
+	data.ResetRpcFailoverForTest()
+	data.ResetRpcRuntimeStatsForTest()
+	t.Cleanup(data.ResetRpcFailoverForTest)
+	t.Cleanup(data.ResetRpcRuntimeStatsForTest)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/wallet/getnowblock":
+			writeTronBlock(w, 5)
+		case "/wallet/getblockbynum":
+			var req struct {
+				Num int64 `json:"num"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			writeTronBlock(w, req.Num)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	node := &mdb.RpcNode{
+		Network: mdb.NetworkTron,
+		Url:     server.URL,
+		Type:    mdb.RpcNodeTypeHttp,
+		Weight:  1,
+		Enabled: true,
+		Purpose: mdb.RpcNodePurposeGeneral,
+		Status:  mdb.RpcNodeStatusOk,
+	}
+	if err := dao.Mdb.Create(node).Error; err != nil {
+		t.Fatalf("seed rpc_node: %v", err)
+	}
+
+	scanner := NewScanner()
+	if err := scanner.Init(); err != nil {
+		t.Fatalf("Init(): %v", err)
+	}
+	if scanner.lastBlock != 5 {
+		t.Fatalf("lastBlock after init = %d, want 5", scanner.lastBlock)
+	}
+	tip := data.SnapshotRpcRuntimeStats()[mdb.NetworkTron]
+	if tip.LatestBlockHeight != 5 || tip.LastSyncAt.IsZero() {
+		t.Fatalf("chain tip after init = %+v, want height 5 and a sync time", tip)
+	}
+	if tip.LastProcessedBlock != 0 || tip.ProcessedBlockCount != 0 || !tip.LastProcessedAt.IsZero() {
+		t.Fatalf("init recorded processing progress: %+v", tip)
+	}
+
+	scanner.poll()
+	caughtUp := data.SnapshotRpcRuntimeStats()[mdb.NetworkTron]
+	if scanner.lastBlock != 5 {
+		t.Fatalf("lastBlock after caught-up poll = %d, want 5", scanner.lastBlock)
+	}
+	if caughtUp.ProcessedBlockCount != 0 || caughtUp.LastProcessedBlock != 0 || !caughtUp.LastProcessedAt.IsZero() {
+		t.Fatalf("caught-up poll recorded processing progress: %+v", caughtUp)
+	}
+
+	scanner.lastBlock = 3
+	before := time.Now()
+	scanner.poll()
+	if scanner.lastBlock != 5 {
+		t.Fatalf("lastBlock after processing = %d, want 5", scanner.lastBlock)
+	}
+	processed := data.SnapshotRpcRuntimeStats()[mdb.NetworkTron]
+	if processed.LastProcessedBlock != 5 {
+		t.Fatalf("last processed block = %d, want 5", processed.LastProcessedBlock)
+	}
+	if processed.ProcessedBlockCount != 2 {
+		t.Fatalf("processed block count = %d, want 2", processed.ProcessedBlockCount)
+	}
+	if processed.LastProcessedAt.Before(before) {
+		t.Fatalf("last processed at = %s, want after %s", processed.LastProcessedAt, before)
+	}
+	if processed.LatestBlockHeight != 5 {
+		t.Fatalf("latest block height = %d, want 5", processed.LatestBlockHeight)
+	}
+}
+
+func writeTronBlock(w http.ResponseWriter, number int64) {
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"block_header": map[string]interface{}{
+			"raw_data": map[string]interface{}{
+				"number":    number,
+				"timestamp": int64(1000),
+			},
+		},
+		"transactions": []interface{}{},
+	})
 }
 
 func TestTronRPCRecordsRuntimeStats(t *testing.T) {

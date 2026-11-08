@@ -1185,10 +1185,14 @@ func TestAdminDashboard_AllRoutes(t *testing.T) {
 
 func TestAdminDashboardRpcStatsSSE(t *testing.T) {
 	e, token := setupAdminTestEnv(t)
+	data.ResetRpcRuntimeStatsForTest()
+	t.Cleanup(data.ResetRpcRuntimeStatsForTest)
 	data.RecordRpcSuccess("TRON")
 	data.RecordRpcSuccess("tron")
 	data.RecordRpcFailure(" tron ")
 	data.RecordRpcBlockHeight("tron", 64532100)
+	data.RecordProcessedBlock("tron", 64532000)
+	data.RecordProcessedBlock("tron", 64532010)
 
 	server := httptest.NewServer(e)
 	defer server.Close()
@@ -1296,6 +1300,15 @@ func TestAdminDashboardRpcStatsSSE(t *testing.T) {
 	if got, _ := tron["last_sync_at"].(string); got == "" {
 		t.Fatalf("tron last_sync_at is empty: %#v", tron)
 	}
+	if got, _ := tron["last_processed_block"].(float64); got != 64532010 {
+		t.Fatalf("tron last_processed_block = %v, want 64532010", got)
+	}
+	if got, _ := tron["processed_block_count"].(float64); got != 2 {
+		t.Fatalf("tron processed_block_count = %v, want 2", got)
+	}
+	if got, _ := tron["last_processed_at"].(string); got == "" {
+		t.Fatalf("tron last_processed_at is empty: %#v", tron)
+	}
 	if got, _ := tron["display_name"].(string); got != "TRON" {
 		t.Fatalf("tron display_name = %q, want TRON", got)
 	}
@@ -1319,6 +1332,15 @@ func TestAdminDashboardRpcStatsSSE(t *testing.T) {
 	}
 	if got, _ := solana["latest_block_height"].(float64); got != 0 {
 		t.Fatalf("solana latest_block_height = %v, want 0", got)
+	}
+	if got, _ := solana["last_processed_block"].(float64); got != 0 {
+		t.Fatalf("solana last_processed_block = %v, want 0", got)
+	}
+	if got, _ := solana["processed_block_count"].(float64); got != 0 {
+		t.Fatalf("solana processed_block_count = %v, want 0", got)
+	}
+	if got, _ := solana["last_processed_at"].(string); got != "" {
+		t.Fatalf("solana last_processed_at = %q, want empty", got)
 	}
 	if got, _ := solana["status"].(string); got != "unknown" {
 		t.Fatalf("solana status = %q, want unknown", got)
