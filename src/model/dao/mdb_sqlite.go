@@ -23,24 +23,19 @@ func SqliteInit() error {
 		return err
 	}
 	color.Green.Printf("[store_db] sqlite filename: %s\n", dbFilename)
-	Mdb, err = openDB(dbFilename, &gorm.Config{
+	Mdb, err = OpenConfiguredSQLite(dbFilename, &gorm.Config{
 		NamingStrategy: schema.NamingStrategy{
 			TablePrefix:   viper.GetString("sqlite_table_prefix"),
 			SingularTable: true,
 		},
 		Logger: logger.Default.LogMode(logger.Error),
-	})
+	}, 1)
 	if err != nil {
 		color.Red.Printf("[store_db] sqlite open DB,err=%s\n", err)
-		// panic(err)
 		return err
 	}
 	if config.SQLDebug {
 		Mdb = Mdb.Debug()
-	}
-	if _, err = configureSQLite(Mdb, 1); err != nil {
-		color.Red.Printf("[store_db] sqlite connDB err:%s", err.Error())
-		return err
 	}
 	log.Sugar.Debug("[store_db] sqlite connDB success")
 	return nil
